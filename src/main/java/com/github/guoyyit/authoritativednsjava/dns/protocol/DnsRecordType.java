@@ -37,8 +37,17 @@ public final class DnsRecordType {
         };
     }
 
-    /** Inverse of {@link #name(int)}; accepts "A", "AAAA", ..., or "TYPEnnn". */
+    /**
+     * Inverse of {@link #name(int)}; accepts "A", "AAAA", ..., or "TYPEnnn"
+     * (RFC 3597). The numeric form is parsed in full: every digit after
+     * "TYPE" is significant, and the value must fit the 16-bit type-code
+     * range 0-65535. Malformed or out-of-range input is rejected with
+     * {@link IllegalArgumentException}; it is never truncated or remapped.
+     */
     public static int parse(String text) {
+        if (text == null) {
+            throw new IllegalArgumentException("missing record type");
+        }
         String upper = text.toUpperCase(Locale.ROOT);
         return switch (upper) {
             case "A" -> A;
@@ -53,10 +62,33 @@ public final class DnsRecordType {
             case "ANY" -> ANY;
             default -> {
                 if (upper.startsWith("TYPE")) {
-                    yield Integer.parseInt(upper.substring(5));
+                    yield parseTypeCode(upper.substring(4), text);
                 }
                 throw new IllegalArgumentException("unknown record type: " + text);
             }
         };
+    }
+
+    private static int parseTypeCode(String digits, String original) {
+        if (digits.isEmpty()) {
+            throw new IllegalArgumentException("missing type code: " + original);
+        }
+        for (int i = 0; i < digits.length(); i++) {
+            char c = digits.charAt(i);
+            if (c < '0' || c > '9') {
+                throw new IllegalArgumentException("invalid type code: " + original);
+            }
+        }
+        final long value;
+        try {
+            value = Long.parseLong(digits);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("invalid type code: " + original, e);
+        }
+        if (value > 65535) {
+            throw new IllegalArgumentException(
+                    "type code out of range (0-65535): " + original);
+        }
+        return (int) value;
     }
 }
