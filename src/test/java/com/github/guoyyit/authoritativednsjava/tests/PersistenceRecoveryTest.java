@@ -128,4 +128,44 @@ class PersistenceRecoveryTest {
         } catch (IOException ignored) {
         }
     }
+
+    @Test
+    void unknownTypeRecordsSurviveSaveLoadRoundTripExactly() throws Exception {
+        DnsName origin = DnsName.of("example.test.");
+        Zone.Builder b = Zone.builder(origin)
+                .add(new DnsRecord(origin, DnsRecordType.SOA, IN, 3600,
+                        RData.soaRdata(DnsName.of("ns.example.test."),
+                                DnsName.of("hm.example.test."), 1, 7200, 3600, 100, 60)));
+        // Single-digit, multi-digit and near-maximum unknown type codes.
+        int[] unknownTypes = {9, 99, 65535};
+        for (int type : unknownTypes) {
+            b.add(new DnsRecord(DnsName.of("u" + type + ".example.test."), type, IN,
+                    300 + type, new byte[]{(byte) 0xDE, (byte) 0xAD, (byte) type}));
+        }
+        Zone zone = b.build();
+
+        ZonePersistence p = new ZonePersistence(file);
+        p.save(zone);
+        // The persisted text must carry the full TYPEnnn form, never truncated.
+        String persisted = Files.readString(file);
+        for (int type : unknownTypes) {
+            assertTrue(persisted.contains("TYPE" + type + " "),
+                    "zone file must contain the exact TYPE" + type + " token:\n" + persisted);
+        }
+
+        Zone recovered = new ZonePersistence(file).load().orElseThrow();
+        assertEquals(zone.allRecords().size(), recovered.allRecords().size());
+        for (int type : unknownTypes) {
+            DnsName owner = DnsName.of("u" + type + ".example.test.");
+            java.util.List<DnsRecord> found = recovered.lookup(owner, type);
+            assertEquals(1, found.size(), "TYPE" + type + " record must survive the round trip");
+            DnsRecord r = found.get(0);
+            assertEquals(owner, r.getName());
+            assertEquals(type, r.getType());
+            assertEquals(IN, r.getRrclass());
+            assertEquals(300L + type, r.getTtl());
+            org.junit.jupiter.api.Assertions.assertArrayEquals(
+                    new byte[]{(byte) 0xDE, (byte) 0xAD, (byte) type}, r.getRdata());
+        }
+    }
 }
